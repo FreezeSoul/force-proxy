@@ -43,7 +43,7 @@ extern "C" {
 
 
 std::shared_mutex g_SocketsMapsMutex;
-std::map<SOCKET, SOCKADDR_IN> g_UDPAssociateMap;
+std::map<SOCKET, udp_association_entry_t> g_UDPAssociateMap;
 std::map<SOCKET, long> g_NonBlockingSockets;
 
 bool IsUDPSocket(SOCKET s)
@@ -136,13 +136,13 @@ int WINAPI Mine_bind(SOCKET s, const sockaddr* addr, int namelen)
 	if (!IsUDPSocket(s) || SocketExistsInUdpAssociationMap(s))
 		return Real_bind(s, addr, namelen);
 
-	sockaddr_in udpProxyAddr;
-	if (!InitializeSocks5UdpAssociation(&udpProxyAddr)) {
+	udp_association_entry_t entry;
+	if (!InitializeSocks5UdpAssociation(&entry)) {
 		return Real_bind(s, addr, namelen);
 	}
 
 	g_SocketsMapsMutex.lock();
-	g_UDPAssociateMap.insert(std::pair<SOCKET, SOCKADDR_IN>(s, udpProxyAddr));
+	g_UDPAssociateMap.insert(std::pair<SOCKET, udp_association_entry_t>(s, entry));
 	g_SocketsMapsMutex.unlock();
 
 	return Real_bind(s, addr, namelen);
@@ -151,7 +151,10 @@ int WINAPI Mine_bind(SOCKET s, const sockaddr* addr, int namelen)
 int WINAPI Mine_closesocket(SOCKET s)
 {
 	g_SocketsMapsMutex.lock();
-	g_UDPAssociateMap.erase(s);
+	if (g_UDPAssociateMap.count(s)) {
+		Real_closesocket(g_UDPAssociateMap[s].proxySocket);
+		g_UDPAssociateMap.erase(s);
+	}	
 	g_NonBlockingSockets.erase(s);
 	g_SocketsMapsMutex.unlock();
 
@@ -162,13 +165,13 @@ int WINAPI Mine_sendto(SOCKET s, const char* buf, int len, int flags, const stru
 {
 	if (SocketExistsInUdpAssociationMap(s) && !IsMultiCastAddr(to)) {
 		g_SocketsMapsMutex.lock_shared();
-		auto proxyAddr = &g_UDPAssociateMap[s];
+		auto entry = &g_UDPAssociateMap[s];
 		g_SocketsMapsMutex.unlock_shared();
 
 		WSABUF destBuff;
 		EncapsulateUDPPacket(&destBuff, (char *)buf, len, to);
 
-		auto sended = Real_sendto(s, destBuff.buf, destBuff.len, 0, (const sockaddr*)proxyAddr, sizeof(*proxyAddr));
+		auto sended = Real_sendto(s, destBuff.buf, destBuff.len, 0, (const sockaddr*)&entry->udpProxyAddr, sizeof(entry->udpProxyAddr));
 		free(destBuff.buf);
 		
 		return sended;
@@ -190,7 +193,7 @@ int WINAPI Mine_WSASendTo(SOCKET s,
 {
 	if (SocketExistsInUdpAssociationMap(s) && !IsMultiCastAddr(lpTo)) {
 		g_SocketsMapsMutex.lock_shared();
-		auto proxyAddr = g_UDPAssociateMap[s];
+		auto entry = &g_UDPAssociateMap[s];
 		g_SocketsMapsMutex.unlock_shared();
 
 		WSABUF destBuff;
@@ -202,8 +205,8 @@ int WINAPI Mine_WSASendTo(SOCKET s,
 			1,
 			lpNumberOfBytesSent,
 			0,
-			(const sockaddr*)(&proxyAddr),
-			sizeof(proxyAddr),
+			(const sockaddr*)(&entry->udpProxyAddr),
+			sizeof(entry->udpProxyAddr),
 			lpOverlapped,
 			lpCompletionRoutine
 		);

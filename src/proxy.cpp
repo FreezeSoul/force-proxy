@@ -110,46 +110,46 @@ int ConnectThroughSocks5(SOCKET s, const struct sockaddr_in* targetAddr, bool no
     return ERROR_SUCCESS;    
 }
 
-bool InitializeSocks5UdpAssociation(sockaddr_in *udpProxyAddr) {
+bool InitializeSocks5UdpAssociation(udp_association_entry_t* entry) {
     //We need tmp socket to request udp association
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) {
+    entry->proxySocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (entry->proxySocket == INVALID_SOCKET) {
         return false;
     }
 
-    SetNonBlockingMode(s, true);
+    SetNonBlockingMode(entry->proxySocket, true);
     /*int iOptval = 1;
     setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
         (char*)&iOptval, sizeof(iOptval));*/
 
-    if (ConnectToProxy(s, true) != ERROR_SUCCESS) {
+    if (ConnectToProxy(entry->proxySocket, true) != ERROR_SUCCESS) {
         return false;
     }
 
-    if (SendSocks5Handshake(s, true) != ERROR_SUCCESS) {
+    if (SendSocks5Handshake(entry->proxySocket, true) != ERROR_SUCCESS) {
         return false;
     }
 
     // Request UDP associate
     // We don't have to specify dst since proxies usually get it from encapsulating header
     uint8_t udpAssociateRequest[10] = { 0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0 }; // SOCKS5, UDP ASSOCIATE, reserved, IPv4, dst addr, dst port
-    WaitForWrite(s, g_ProxyTimeout);
-    send(s, (const char*)udpAssociateRequest, sizeof(udpAssociateRequest), 0);
+    WaitForWrite(entry->proxySocket, g_ProxyTimeout);
+    send(entry->proxySocket, (const char*)udpAssociateRequest, sizeof(udpAssociateRequest), 0);
 
     uint8_t udpAssociateResponse[10];
-    WaitForRead(s, g_ProxyTimeout);
-    recv(s, (char*)udpAssociateResponse, sizeof(udpAssociateResponse), 0);
+    WaitForRead(entry->proxySocket, g_ProxyTimeout);
+    recv(entry->proxySocket, (char*)udpAssociateResponse, sizeof(udpAssociateResponse), 0);
 
     if (udpAssociateResponse[1] != 0x00) {
         return false;
     }
 
-    Real_closesocket(s);
+    //Real_closesocket(s);
 
     // Get address and port to send UDP packets
-    udpProxyAddr->sin_family = AF_INET;
-    memcpy(&udpProxyAddr->sin_addr, udpAssociateResponse + 4, 4);
-    memcpy(&udpProxyAddr->sin_port, udpAssociateResponse + 8, 2);
+    entry->udpProxyAddr.sin_family = AF_INET;
+    memcpy(&entry->udpProxyAddr.sin_addr, udpAssociateResponse + 4, 4);
+    memcpy(&entry->udpProxyAddr.sin_port, udpAssociateResponse + 8, 2);
 
     return true;
 }
