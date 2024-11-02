@@ -25,6 +25,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         GetEnvironmentVariableA("SOCKS5_PROXY_ADDRESS", addressBuff, sizeof(addressBuff));
         GetEnvironmentVariableA("SOCKS5_PROXY_PORT", portBuff, sizeof(portBuff));
         GetEnvironmentVariableA("SOCKS5_PROXY_TIMEOUT", timeoutBuff, sizeof(timeoutBuff));
+        GetEnvironmentVariableA("SOCKS5_PROXY_LOGIN", g_ProxyLogin, sizeof(g_ProxyLogin));
+        GetEnvironmentVariableA("SOCKS5_PROXY_PASSWORD", g_ProxyPassword, sizeof(g_ProxyPassword));
 
         inet_pton(AF_INET, addressBuff, &g_ProxyAddress);
         g_ProxyPort = htons(static_cast<uint16_t>(strtol(portBuff, nullptr, 10)));

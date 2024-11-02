@@ -3,6 +3,8 @@
 IN_ADDR g_ProxyAddress;
 uint16_t g_ProxyPort;
 uint32_t g_ProxyTimeout = 2;
+char g_ProxyLogin[UINT8_MAX] = "";
+char g_ProxyPassword[UINT8_MAX] = "";
 
 bool WaitForWrite(SOCKET s, int timeoutSec)
 {
@@ -60,7 +62,7 @@ int ConnectToProxy(SOCKET s, bool nonBlocking)
 int SendSocks5Handshake(SOCKET s, bool nonBlocking)
 {
     //Send socks5 handshake
-    uint8_t request[] = { 0x05, 0x01, 0x00 };
+    uint8_t request[] = { 0x05, 0x02, 0x00, 0x02 };
     if (nonBlocking) WaitForWrite(s, g_ProxyTimeout);
     send(s, (const char*)request, sizeof(request), 0);
 
@@ -69,8 +71,38 @@ int SendSocks5Handshake(SOCKET s, bool nonBlocking)
     if (nonBlocking) WaitForRead(s, g_ProxyTimeout);
     recv(s, (char*)response, sizeof(response), 0);
 
-    if (response[0] != 0x05 || response[1] != 0x00) {
-        return SOCKET_ERROR;  // Socks5 auth error
+    if (response[0] != 0x05) {
+        return SOCKET_ERROR;
+    }
+
+    if (response[1] == 0x02) { //login/password auth
+        size_t loginLen = strlen(g_ProxyLogin);
+        size_t passwordLen = strlen(g_ProxyPassword);
+
+        size_t authLen = 0;
+        uint8_t authRequest[513];  // Max size (1 + 1 + 255 + 1 + 255) = 513 bytes
+        authRequest[authLen++] = 0x01; // Authentication subprotocol version
+
+        authRequest[authLen++] = (uint8_t)loginLen;
+        memcpy(&authRequest[authLen], g_ProxyLogin, loginLen);
+        authLen += loginLen;
+
+        authRequest[authLen++] = (uint8_t)passwordLen;
+        memcpy(&authRequest[authLen], g_ProxyPassword, passwordLen);
+        authLen += passwordLen;
+
+        if (nonBlocking) WaitForWrite(s, g_ProxyTimeout);
+        send(s, (const char*)authRequest, authLen, 0);
+
+        uint8_t authResponse[2];
+        if (nonBlocking) WaitForRead(s, g_ProxyTimeout);
+        recv(s, (char*)authResponse, sizeof(authResponse), 0);
+
+        if (authResponse[0] != 0x01 || authResponse[1] != 0x00) {
+            return SOCKET_ERROR;  // Authentication failed
+        }
+    } else if (response[1] != 0x00) {
+        return SOCKET_ERROR;  // Server requires an unsupported authentication method
     }
 
     return ERROR_SUCCESS;
