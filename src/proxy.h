@@ -3,8 +3,8 @@
 extern IN_ADDR g_ProxyAddress;
 extern uint16_t g_ProxyPort;
 extern uint32_t g_ProxyTimeout;
-extern char g_ProxyLogin[UINT8_MAX];
-extern char g_ProxyPassword[UINT8_MAX];
+extern char g_ProxyLogin[256];
+extern char g_ProxyPassword[256]; 
 
 typedef struct {
 	SOCKET proxySocket;

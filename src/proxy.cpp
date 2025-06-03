@@ -1,10 +1,7 @@
 #include "stdafx.h"
 
-IN_ADDR g_ProxyAddress;
-uint16_t g_ProxyPort;
-uint32_t g_ProxyTimeout = 2;
-char g_ProxyLogin[UINT8_MAX] = "";
-char g_ProxyPassword[UINT8_MAX] = "";
+// Глобальные переменные g_ProxyAddress, g_ProxyPort, g_ProxyTimeout, g_ProxyLogin, g_ProxyPassword теперь в dllmain.cpp
+
 
 bool WaitForWrite(SOCKET s, int timeoutSec)
 {
@@ -62,25 +59,44 @@ int ConnectToProxy(SOCKET s, bool nonBlocking)
 int SendSocks5Handshake(SOCKET s, bool nonBlocking)
 {
     //Send socks5 handshake
-    uint8_t request[] = { 0x05, 0x02, 0x00, 0x02 };
+    uint8_t request[] = { 0x05, 0x02, 0x00, 0x02 }; 
+    if (strlen(g_ProxyLogin) == 0 && strlen(g_ProxyPassword) == 0) { 
+        request[1] = 0x01; 
+        request[2] = 0x00; 
+
+    }
+
+
     if (nonBlocking) WaitForWrite(s, g_ProxyTimeout);
-    send(s, (const char*)request, sizeof(request), 0);
+    int bytesToSend = (request[1] == 0x01) ? 3 : sizeof(request);
+    if (send(s, (const char*)request, bytesToSend, 0) == SOCKET_ERROR) {
+        return SOCKET_ERROR;
+    }
 
     //Receive response
     uint8_t response[2];
     if (nonBlocking) WaitForRead(s, g_ProxyTimeout);
-    recv(s, (char*)response, sizeof(response), 0);
+    if (recv(s, (char*)response, sizeof(response), 0) <= 0) { 
+        return SOCKET_ERROR;
+    }
 
     if (response[0] != 0x05) {
         return SOCKET_ERROR;
     }
 
     if (response[1] == 0x02) { //login/password auth
+        if (strlen(g_ProxyLogin) == 0 && strlen(g_ProxyPassword) == 0) {
+            return SOCKET_ERROR;
+        }
         size_t loginLen = strlen(g_ProxyLogin);
         size_t passwordLen = strlen(g_ProxyPassword);
 
+        if (loginLen > 255 || passwordLen > 255) {
+            return SOCKET_ERROR; 
+        }
+
         size_t authLen = 0;
-        uint8_t authRequest[513];  // Max size (1 + 1 + 255 + 1 + 255) = 513 bytes
+        uint8_t authRequest[1 + 1 + 255 + 1 + 255];  
         authRequest[authLen++] = 0x01; // Authentication subprotocol version
 
         authRequest[authLen++] = (uint8_t)loginLen;
@@ -92,17 +108,26 @@ int SendSocks5Handshake(SOCKET s, bool nonBlocking)
         authLen += passwordLen;
 
         if (nonBlocking) WaitForWrite(s, g_ProxyTimeout);
-        send(s, (const char*)authRequest, authLen, 0);
+        if (send(s, (const char*)authRequest, static_cast<int>(authLen), 0) == SOCKET_ERROR) {
+            return SOCKET_ERROR;
+        }
 
         uint8_t authResponse[2];
         if (nonBlocking) WaitForRead(s, g_ProxyTimeout);
-        recv(s, (char*)authResponse, sizeof(authResponse), 0);
+        if (recv(s, (char*)authResponse, sizeof(authResponse), 0) <= 0) {
+            return SOCKET_ERROR;
+        }
 
         if (authResponse[0] != 0x01 || authResponse[1] != 0x00) {
             return SOCKET_ERROR;  // Authentication failed
         }
-    } else if (response[1] != 0x00) {
-        return SOCKET_ERROR;  // Server requires an unsupported authentication method
+    } else if (response[1] == 0x00) { // No authentication required
+    }
+    else if (response[1] == 0xFF) { // No acceptable methods
+        return SOCKET_ERROR; 
+    }
+     else {
+        return SOCKET_ERROR;  // Server requires an unsupported authentication method or другая ошибка
     }
 
     return ERROR_SUCCESS;

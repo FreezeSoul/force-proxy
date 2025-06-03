@@ -163,15 +163,25 @@ int WINAPI Mine_closesocket(SOCKET s)
 
 int WINAPI Mine_sendto(SOCKET s, const char* buf, int len, int flags, const struct sockaddr* to, int tolen)
 {
-	if (SocketExistsInUdpAssociationMap(s) && !IsMultiCastAddr(to)) {
-		g_SocketsMapsMutex.lock_shared();
-		auto entry = &g_UDPAssociateMap[s];
-		g_SocketsMapsMutex.unlock_shared();
+	udp_association_entry_t entryCopy; 
+	bool associated = false;
 
+	if (!IsMultiCastAddr(to)) { 
+		g_SocketsMapsMutex.lock_shared();
+		auto it = g_UDPAssociateMap.find(s);
+		if (it != g_UDPAssociateMap.end()) {
+			entryCopy = it->second; 
+			associated = true;
+		}
+		g_SocketsMapsMutex.unlock_shared();
+	}
+
+
+	if (associated) {
 		WSABUF destBuff;
 		EncapsulateUDPPacket(&destBuff, (char *)buf, len, to);
 
-		auto sended = Real_sendto(s, destBuff.buf, destBuff.len, 0, (const sockaddr*)&entry->udpProxyAddr, sizeof(entry->udpProxyAddr));
+		auto sended = Real_sendto(s, destBuff.buf, destBuff.len, 0, (const sockaddr*)&entryCopy.udpProxyAddr, sizeof(entryCopy.udpProxyAddr));
 		free(destBuff.buf);
 		
 		return sended;
@@ -191,22 +201,36 @@ int WINAPI Mine_WSASendTo(SOCKET s,
 	LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
 )
 {
-	if (SocketExistsInUdpAssociationMap(s) && !IsMultiCastAddr(lpTo)) {
+	udp_association_entry_t entryCopy; 
+	bool associated = false;
+
+	if (!IsMultiCastAddr(lpTo)) { 
 		g_SocketsMapsMutex.lock_shared();
-		auto entry = &g_UDPAssociateMap[s];
+		auto it = g_UDPAssociateMap.find(s);
+		if (it != g_UDPAssociateMap.end()) {
+			entryCopy = it->second; 
+			associated = true;
+		}
 		g_SocketsMapsMutex.unlock_shared();
+	}
+
+	if (associated) {
+	
+	       if (dwBufferCount == 0 || lpBuffers == nullptr || lpBuffers->len == 0) {
+	           return Real_WSASendTo(s, lpBuffers, dwBufferCount, lpNumberOfBytesSent, dwFlags, lpTo, iTolen, lpOverlapped, lpCompletionRoutine);
+	       }
 
 		WSABUF destBuff;
 		EncapsulateUDPPacket(&destBuff, lpBuffers->buf, lpBuffers->len, lpTo);
 
 		auto status = Real_WSASendTo(
 			s,
-			&destBuff,
-			1,
+			&destBuff, 
+			1,         
 			lpNumberOfBytesSent,
-			0,
-			(const sockaddr*)(&entry->udpProxyAddr),
-			sizeof(entry->udpProxyAddr),
+			0, 
+			(const sockaddr*)(&entryCopy.udpProxyAddr),
+			sizeof(entryCopy.udpProxyAddr),
 			lpOverlapped,
 			lpCompletionRoutine
 		);
